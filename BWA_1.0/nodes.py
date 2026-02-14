@@ -21,6 +21,7 @@ def orchestrator_node (state: State) -> dict:
             HumanMessage(content=(f"Tpoic: {state['topic']}"))
         ]
     )
+
     return {"plan": plan}
 
 
@@ -67,14 +68,13 @@ def reducer_node(state: State) -> dict:
     Blog: {final_md}
     """
     ans = llm.invoke(prompt)
-    print(ans)
 
     # Save to file
     filename = "".join(c if c.isalnum() or c in (" ", "_", "-") else "" for c in title)
     filename = filename.strip().lower().replace(" ", "_") + ".md"
     Path(filename).write_text(final_md, encoding="utf-8")
 
-    return {"final": final_md}
+    return {"final": ans}
 
 
 # Buling the Graph
