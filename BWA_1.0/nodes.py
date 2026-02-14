@@ -6,7 +6,7 @@ from pathlib import Path
 from langgraph.graph import StateGraph, START, END
 
 
-llm = ChatOllama(model="tinyllama")
+llm = ChatOllama(model="llama3.1")
 
 
 # This node breaks down the topic into sub-topics
@@ -70,9 +70,9 @@ def reducer_node(state: State) -> dict:
     print(ans)
 
     # Save to file
-    filename = title.lower().replace(" ","_") + ".md"
-    output_path = Path(filename)
-    output_path.write_text(final_md, encoding="utf-8")
+    filename = "".join(c if c.isalnum() or c in (" ", "_", "-") else "" for c in title)
+    filename = filename.strip().lower().replace(" ", "_") + ".md"
+    Path(filename).write_text(final_md, encoding="utf-8")
 
     return {"final": final_md}
 
