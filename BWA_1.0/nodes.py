@@ -18,7 +18,7 @@ def orchestrator_node (state: State) -> dict:
                     "Create a blog plan with 5-7 sections on the following topic."
                 )
             ),
-            HumanMessage(content=(f"Tpoic: {state['topic']}"))
+            HumanMessage(content=(f"Topic: {state['topic']}"))
         ]
     )
 

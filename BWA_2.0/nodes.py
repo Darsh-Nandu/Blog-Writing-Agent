@@ -46,7 +46,7 @@ def orchestrator_node(state: State) -> dict:
                     "Output must strictly match the Plan schema."
                 )
             ),
-            HumanMessage(content=(f"Tpoic: {state['topic']}"))
+            HumanMessage(content=(f"Topic: {state['topic']}"))
         ]
     )
 
