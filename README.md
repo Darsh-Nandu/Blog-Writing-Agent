@@ -31,9 +31,9 @@
 
 ## What Is This?
 
-**Blog Writing Agent (BWA)** is an end-to-end agentic pipeline that transforms a single blog topic into a polished, publication-ready Markdown post. It autonomously decides *how* to research the topic, plans a structured outline, writes each section in parallel, and assembles the final piece — all while keeping you in control at two critical Human-in-the-Loop checkpoints.
+**Blog Writing Agent (BWA)** is an end-to-end agentic pipeline that transforms a single blog topic into a polished, publication-ready Markdown post. It autonomously decides *how* to research the topic, plans a structured outline, writes each section in parallel, and assembles the final piece - all while keeping you in control at two critical Human-in-the-Loop checkpoints.
 
-Built with [LangGraph](https://github.com/langchain-ai/langgraph) and [Streamlit](https://streamlit.io/), BWA evolved across **four progressive versions**. The final version (`BlogAgent-Final/`) is the flagship — a production-ready web app with dual LLM provider support, intelligent routing, live web research, and a rich dark-mode UI.
+Built with [LangGraph](https://github.com/langchain-ai/langgraph) and [Streamlit](https://streamlit.io/), BWA evolved across **four progressive versions**. The final version (`BlogAgent-Final/`) is the flagship - a production-ready web app with dual LLM provider support, intelligent routing, live web research, and a rich dark-mode UI.
 
 <br/>
 
@@ -45,7 +45,7 @@ Built with [LangGraph](https://github.com/langchain-ai/langgraph) and [Streamlit
 |:---|:---|
 | 🧭 **Smart Router** | Classifies your topic and picks the optimal research mode automatically |
 | 🌐 **Live Web Research** | Tavily-powered search with recency filtering and URL deduplication |
-| 🛑 **Human-in-the-Loop** | Two approval checkpoints — review strategy & outline before writing |
+| 🛑 **Human-in-the-Loop** | Two approval checkpoints - review strategy & outline before writing |
 | ⚡ **Dual LLM Providers** | Switch between Groq (cloud) or Ollama (local) in one click |
 | 🖊️ **Parallel Section Writing** | Workers write each blog section concurrently via LangGraph fan-out |
 | 🔍 **Citation Grounding** | Evidence items are sourced, deduplicated, and woven into the blog |
