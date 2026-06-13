@@ -1,5 +1,5 @@
 """
-BWA 4.0  –  Blog Writing Agent
+BWA 4.0 - Blog Writing Agent
 Streamlit UI with:
   • Ollama + Groq provider support
   • Human-in-the-loop checkpoints (router & plan approval)
@@ -8,9 +8,39 @@ Streamlit UI with:
 """
 
 from __future__ import annotations
-import os, time, json
+import os, time, json, re
 from datetime import date
 from pathlib import Path
+
+
+# helper: very simple markdown → HTML (just for headings/bold in preview)
+def _md_to_html(md: str) -> str:
+    """Minimal markdown → HTML for the preview card (Streamlit handles most of it)."""
+    lines = []
+    in_code = False
+    for line in md.split("\n"):
+        if line.startswith("```"):
+            in_code = not in_code
+            lines.append("<pre><code>" if in_code else "</code></pre>")
+            continue
+        if in_code:
+            lines.append(line.replace("<", "&lt;").replace(">", "&gt;"))
+            continue
+        line = re.sub(r"^# (.+)$",  r"<h1>\1</h1>", line)
+        line = re.sub(r"^## (.+)$", r"<h2>\1</h2>", line)
+        line = re.sub(r"^### (.+)$",r"<h3>\1</h3>", line)
+        line = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", line)
+        line = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", line)
+        line = re.sub(r"`(.+?)`",       r"<code>\1</code>", line)
+        line = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', line)
+        if line.startswith("- ") or line.startswith("* "):
+            line = "<li>" + line[2:] + "</li>"
+        elif line.strip() == "":
+            line = "<br>"
+        else:
+            line = "<p>" + line + "</p>"
+        lines.append(line)
+    return "\n".join(lines)
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -20,7 +50,7 @@ load_dotenv()
 # page config (must be first Streamlit call) 
 st.set_page_config(
     page_title="BWA 4.0 — Blog Writing Agent",
-    page_icon="✍️",
+    page_icon=":material/auto_stories:",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -33,88 +63,123 @@ from nodes import router_node, research_node, orchestrator_node, worker_node, re
 # global CSS
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
 /* ── app shell ── */
-[data-testid="stAppViewContainer"] { background: #0f1117; }
-[data-testid="stSidebar"]          { background: #16191f; border-right: 1px solid #2a2d3a; }
-[data-testid="stSidebar"] *        { color: #d1d5db !important; }
+html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; }
+[data-testid="stAppViewContainer"] {
+    background: radial-gradient(1200px 600px at 10% -10%, #1b1f2e 0%, #0c0e14 45%, #0a0b10 100%);
+}
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #14161e 0%, #0f1117 100%);
+    border-right: 1px solid #23262f;
+}
+[data-testid="stSidebar"] *        { color: #cbd2dc !important; }
+[data-testid="stSidebar"] .stRadio label, [data-testid="stSidebar"] .stSelectbox label { font-weight: 500; }
+
+/* material symbols rendered inline */
+[data-testid="stIconMaterial"] { vertical-align: -4px; }
 
 /* ── header ── */
 .bwa-header {
-    display: flex; align-items: center; gap: 14px;
-    padding: 22px 0 18px;
-    border-bottom: 1px solid #2a2d3a;
-    margin-bottom: 24px;
+    display: flex; align-items: center; gap: 16px;
+    padding: 22px 4px 22px;
+    border-bottom: 1px solid #23262f;
+    margin-bottom: 28px;
 }
-.bwa-header h1 { font-size: 1.85rem; font-weight: 700; color: #f9fafb; margin: 0; }
+.bwa-logo {
+    width: 46px; height: 46px; border-radius: 12px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6 55%, #ec4899);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 8px 24px -8px rgba(99,102,241,.6);
+    flex-shrink: 0;
+}
+.bwa-logo svg { width: 24px; height: 24px; stroke: #fff; }
+.bwa-header h1 {
+    font-size: 1.6rem; font-weight: 800; color: #f8fafc; margin: 0;
+    letter-spacing: -0.02em;
+}
 .bwa-badge {
     background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    color: white; font-size: 0.65rem; font-weight: 700;
-    padding: 3px 8px; border-radius: 99px; letter-spacing: .06em;
+    color: white; font-size: 0.62rem; font-weight: 700;
+    padding: 3px 9px; border-radius: 99px; letter-spacing: .08em;
+    box-shadow: 0 2px 8px -2px rgba(139,92,246,.6);
 }
 
 /* ── cards ── */
 .card {
-    background: #1a1d27;
-    border: 1px solid #2a2d3a;
-    border-radius: 12px;
-    padding: 20px 24px;
+    background: linear-gradient(180deg, #1c1f2b 0%, #181b25 100%);
+    border: 1px solid #262a36;
+    border-radius: 14px;
+    padding: 22px 26px;
     margin-bottom: 18px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.02) inset, 0 12px 24px -16px rgba(0,0,0,.5);
 }
 .card-title {
-    font-size: 0.78rem; font-weight: 600; letter-spacing: .08em;
-    text-transform: uppercase; color: #6b7280; margin-bottom: 12px;
+    font-size: 0.74rem; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: #7c8493; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
 }
 
 /* ── step log ── */
 .step-log {
-    background: #111318;
-    border: 1px solid #2a2d3a;
-    border-radius: 10px;
-    padding: 14px 18px;
+    background: #0e1016;
+    border: 1px solid #262a36;
+    border-radius: 12px;
+    padding: 16px 20px;
     max-height: 340px;
     overflow-y: auto;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 0.82rem;
-    color: #d1d5db;
-    line-height: 1.6;
+    color: #cbd2dc;
+    line-height: 1.7;
 }
-.log-line { margin: 2px 0; }
-.log-ts   { color: #4b5563; margin-right: 8px; }
+.step-log::-webkit-scrollbar { width: 8px; }
+.step-log::-webkit-scrollbar-thumb { background: #2a2e3b; border-radius: 99px; }
+.log-line { margin: 2px 0; display: flex; align-items: center; gap: 6px; }
+.log-ts   { color: #4b5563; margin-right: 4px; }
 
 /* ── HITL panels ── */
 .hitl-box {
-    background: #1a1d27;
-    border: 1px solid #f59e0b;
-    border-radius: 10px;
-    padding: 18px 22px;
+    background: linear-gradient(135deg, rgba(245,158,11,.10), rgba(245,158,11,.02));
+    border: 1px solid rgba(245,158,11,.35);
+    border-radius: 14px;
+    padding: 18px 24px;
     margin-bottom: 18px;
 }
 .hitl-title {
-    color: #f59e0b; font-weight: 700; font-size: 1rem; margin-bottom: 8px;
+    color: #fbbf24; font-weight: 700; font-size: 1rem; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px;
 }
-.hitl-sub { color: #9ca3af; font-size: 0.86rem; margin-bottom: 12px; }
+.hitl-sub { color: #a1a8b5; font-size: 0.86rem; margin-bottom: 0; }
 
 /* ── router chip ── */
 .mode-chip {
-    display: inline-block; padding: 4px 12px; border-radius: 99px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 13px; border-radius: 99px;
     font-size: 0.75rem; font-weight: 700; margin-right: 8px;
 }
-.chip-open   { background: #1d4ed8; color: #bfdbfe; }
-.chip-hybrid { background: #065f46; color: #a7f3d0; }
-.chip-closed { background: #374151; color: #d1d5db; }
+.chip-open   { background: rgba(59,130,246,.16); color: #93c5fd; border: 1px solid rgba(59,130,246,.3); }
+.chip-hybrid { background: rgba(16,185,129,.16); color: #6ee7b7; border: 1px solid rgba(16,185,129,.3); }
+.chip-closed { background: rgba(148,163,184,.14); color: #cbd5e1; border: 1px solid rgba(148,163,184,.25); }
 
 /* ── task cards ── */
 .task-card {
-    background: #111318;
-    border: 1px solid #2a2d3a;
+    background: #11141c;
+    border: 1px solid #262a36;
     border-left: 3px solid #6366f1;
-    border-radius: 8px;
-    padding: 12px 16px;
+    border-radius: 10px;
+    padding: 14px 18px;
     margin-bottom: 10px;
+    transition: border-color .15s ease;
 }
-.task-title { color: #f9fafb; font-weight: 600; font-size: 0.92rem; }
-.task-meta  { color: #6b7280; font-size: 0.75rem; margin-top: 3px; }
-.task-bullet { color: #9ca3af; font-size: 0.82rem; margin-top: 6px; list-style: disc; padding-left: 18px; }
+.task-card:hover { border-left-color: #8b5cf6; }
+.task-title { color: #f8fafc; font-weight: 600; font-size: 0.93rem; }
+.task-meta  { color: #7c8493; font-size: 0.75rem; margin-top: 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.task-tag   { background: #1f2433; color: #9ca3af; font-size: 0.7rem; padding: 2px 9px; border-radius: 99px; }
+.task-flag  { color: #a78bfa; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; }
+.task-bullet { color: #a1a8b5; font-size: 0.83rem; margin-top: 8px; list-style: disc; padding-left: 18px; }
 
 /* ── progress bar ── */
 .prog-wrap { background: #1a1d27; border-radius: 99px; height: 8px; margin: 8px 0; }
@@ -126,19 +191,21 @@ st.markdown("""
 
 /* ── final blog ── */
 .blog-preview {
-    background: #1a1d27;
-    border: 1px solid #2a2d3a;
-    border-radius: 12px;
-    padding: 32px 40px;
-    color: #e5e7eb;
+    background: linear-gradient(180deg, #1c1f2b 0%, #181b25 100%);
+    border: 1px solid #262a36;
+    border-radius: 16px;
+    padding: 36px 44px;
+    color: #dde1e8;
     line-height: 1.8;
-    font-size: 0.95rem;
+    font-size: 0.96rem;
+    box-shadow: 0 20px 40px -28px rgba(0,0,0,.6);
 }
-.blog-preview h1 { color: #f9fafb; font-size: 2rem; border-bottom: 1px solid #2a2d3a; padding-bottom: 12px; }
-.blog-preview h2 { color: #e5e7eb; font-size: 1.35rem; margin-top: 28px; }
-.blog-preview code { background: #111318; padding: 2px 6px; border-radius: 4px; color: #a78bfa; font-size: 0.87em; }
-.blog-preview pre  { background: #111318; border: 1px solid #2a2d3a; border-radius: 8px; padding: 16px; overflow-x: auto; }
-.blog-preview a    { color: #818cf8; }
+.blog-preview h1 { color: #f8fafc; font-size: 2rem; font-weight: 800; border-bottom: 1px solid #262a36; padding-bottom: 14px; letter-spacing: -0.02em; }
+.blog-preview h2 { color: #eef0f4; font-size: 1.35rem; font-weight: 700; margin-top: 30px; }
+.blog-preview h3 { color: #e5e7eb; font-size: 1.1rem; font-weight: 700; margin-top: 22px; }
+.blog-preview code { background: #0e1016; padding: 2px 6px; border-radius: 4px; color: #a78bfa; font-size: 0.87em; font-family: 'JetBrains Mono', monospace; }
+.blog-preview pre  { background: #0e1016; border: 1px solid #262a36; border-radius: 10px; padding: 18px; overflow-x: auto; }
+.blog-preview a    { color: #818cf8; text-decoration: none; border-bottom: 1px solid rgba(129,140,248,.35); }
 
 /* ── score badge ── */
 .score-badge {
@@ -152,18 +219,52 @@ st.markdown("""
 
 /* ── buttons ── */
 div[data-testid="stButton"] > button {
-    border-radius: 8px !important;
+    border-radius: 9px !important;
     font-weight: 600 !important;
+    border: 1px solid #2a2e3b !important;
+    transition: all .15s ease !important;
+}
+div[data-testid="stButton"] > button:hover {
+    border-color: #6366f1 !important;
+    color: #c7d2fe !important;
 }
 div[data-testid="stButton"] > button[kind="primary"] {
     background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
     border: none !important;
+    box-shadow: 0 8px 20px -10px rgba(139,92,246,.7) !important;
+}
+div[data-testid="stButton"] > button[kind="primary"]:hover {
+    filter: brightness(1.08);
+    color: #fff !important;
+}
+div[data-testid="stDownloadButton"] > button {
+    border-radius: 9px !important; font-weight: 600 !important;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    border: none !important;
+    box-shadow: 0 8px 20px -10px rgba(139,92,246,.7) !important;
 }
 
+/* ── tabs ── */
+.stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid #262a36; }
+.stTabs [data-baseweb="tab"] {
+    background: transparent; border-radius: 8px 8px 0 0; font-weight: 600;
+    color: #7c8493; padding: 10px 18px;
+}
+.stTabs [aria-selected="true"] { color: #c7d2fe !important; background: #1c1f2b; }
+
+/* ── metrics ── */
+[data-testid="stMetric"] {
+    background: linear-gradient(180deg, #1c1f2b 0%, #181b25 100%);
+    border: 1px solid #262a36; border-radius: 12px; padding: 14px 18px;
+}
+[data-testid="stMetricLabel"] { color: #7c8493 !important; }
+[data-testid="stMetricValue"] { color: #f8fafc !important; font-weight: 800 !important; }
+
 /* ── misc ── */
-[data-testid="stMarkdownContainer"] p { color: #d1d5db; }
-.stAlert { border-radius: 10px !important; }
-.stExpander { border: 1px solid #2a2d3a !important; border-radius: 10px !important; }
+[data-testid="stMarkdownContainer"] p { color: #cbd2dc; }
+.stAlert { border-radius: 12px !important; border: 1px solid #262a36 !important; }
+.stExpander { border: 1px solid #262a36 !important; border-radius: 12px !important; background: #14161e; }
+hr { border-color: #262a36 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -199,14 +300,14 @@ def log(msg: str):
 
 # sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ Configuration")
+    st.markdown("##### :material/tune: Configuration")
     st.divider()
 
     # Provider
     st.markdown("**LLM Provider**")
     provider = st.radio(
         "provider", ["groq", "ollama"],
-        format_func=lambda x: "☁️ Groq (cloud)" if x == "groq" else "💻 Ollama (local)",
+        format_func=lambda x: "Groq · Cloud" if x == "groq" else "Ollama · Local",
         index=0 if st.session_state.provider == "groq" else 1,
         label_visibility="collapsed",
     )
@@ -255,7 +356,7 @@ with st.sidebar:
     st.caption("BWA 4.0 · Human-in-the-Loop Edition")
     st.caption("Supports Groq + Ollama · Web research via Tavily")
 
-    if st.button("🔄 Reset Session", use_container_width=True):
+    if st.button("Reset Session", icon=":material/refresh:", use_container_width=True):
         for k in list(st.session_state.keys()):
             del st.session_state[k]
         _init()
@@ -265,12 +366,18 @@ with st.sidebar:
 # main content
 st.markdown("""
 <div class="bwa-header">
+  <div class="bwa-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 20h9"/>
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+    </svg>
+  </div>
   <div>
     <div style="display:flex;align-items:center;gap:10px">
-      <h1>✍️ Blog Writing Agent</h1>
+      <h1>Blog Writing Agent</h1>
       <span class="bwa-badge">v4.0</span>
     </div>
-    <p style="color:#6b7280;margin:4px 0 0;font-size:0.9rem">
+    <p style="color:#7c8493;margin:4px 0 0;font-size:0.9rem">
       AI-powered blog generator · Human-in-the-loop · Groq + Ollama
     </p>
   </div>
@@ -282,7 +389,7 @@ st.markdown("""
 if st.session_state.stage == "idle":
     col_a, col_b = st.columns([2, 1])
     with col_a:
-        st.markdown('<div class="card"><div class="card-title">Blog Topic</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card"><div class="card-title">:material/edit_note: Blog Topic</div>', unsafe_allow_html=True)
         topic = st.text_area(
             "What should the blog be about?",
             placeholder="e.g.  'How LangGraph enables stateful multi-agent workflows'\n"
@@ -294,9 +401,9 @@ if st.session_state.stage == "idle":
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col_b:
-        st.markdown('<div class="card"><div class="card-title">Quick Tips</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card"><div class="card-title">:material/lightbulb: Quick Tips</div>', unsafe_allow_html=True)
         st.markdown("""
-        <ul style="color:#9ca3af;font-size:0.83rem;padding-left:16px;margin:0">
+        <ul style="color:#a1a8b5;font-size:0.83rem;padding-left:16px;margin:0">
           <li>Be specific for better results</li>
           <li>Include audience hints if needed</li>
           <li>Time-sensitive topics → open_book mode</li>
@@ -307,7 +414,7 @@ if st.session_state.stage == "idle":
 
     col_btn, _ = st.columns([1, 2])
     with col_btn:
-        if st.button("🚀 Generate Blog", type="primary", use_container_width=True, disabled=not topic.strip()):
+        if st.button("Generate Blog", icon=":material/rocket_launch:", type="primary", use_container_width=True, disabled=not topic.strip()):
             st.session_state.topic    = topic.strip()
             st.session_state.stage   = "routing"
             st.session_state.log_lines = []
@@ -316,7 +423,7 @@ if st.session_state.stage == "idle":
 
 # STAGE: ROUTING
 elif st.session_state.stage == "routing":
-    st.info(f"📡 Analysing topic: **{st.session_state.topic}**")
+    st.info(f"Analysing topic: **{st.session_state.topic}**", icon=":material/satellite_alt:")
 
     with st.spinner("Running router…"):
         fake_state = {
@@ -349,11 +456,15 @@ elif st.session_state.stage == "hitl_router":
 
     # HITL box
     chip_cls = {"open_book": "chip-open", "hybrid": "chip-hybrid", "closed_book": "chip-closed"}[mode]
-    chip_lbl = {"open_book": "🌐 Open Book", "hybrid": "🔀 Hybrid", "closed_book": "📚 Closed Book"}[mode]
+    chip_lbl = {
+        "open_book": ':material/public: Open Book',
+        "hybrid": ':material/shuffle: Hybrid',
+        "closed_book": ':material/menu_book: Closed Book',
+    }[mode]
 
     st.markdown(f"""
     <div class="hitl-box">
-      <div class="hitl-title">🛑 Checkpoint 1 of 2 — Review Research Strategy</div>
+      <div class="hitl-title">:material/flag: Checkpoint 1 of 2 — Review Research Strategy</div>
       <div class="hitl-sub">The router has analysed your topic. Please confirm or redirect before research begins.</div>
     </div>
     """, unsafe_allow_html=True)
@@ -362,41 +473,41 @@ elif st.session_state.stage == "hitl_router":
     with col1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown(f'**Mode chosen:** <span class="mode-chip {chip_cls}">{chip_lbl}</span>', unsafe_allow_html=True)
-        st.markdown(f"**Research needed:** {'✅ Yes' if rd['needs_research'] else '❌ No'}")
+        st.markdown(f"**Research needed:** {':material/check_circle: Yes' if rd['needs_research'] else ':material/cancel: No'}")
         st.markdown(f"**Recency window:** {rd['recency_days']} days")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
         if rd.get("queries"):
-            st.markdown('<div class="card"><div class="card-title">Planned Search Queries</div>', unsafe_allow_html=True)
+            st.markdown('<div class="card"><div class="card-title">:material/travel_explore: Planned Search Queries</div>', unsafe_allow_html=True)
             for q in rd["queries"]:
-                st.markdown(f"🔍 `{q}`")
+                st.markdown(f"`{q}`")
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="card"><p style="color:#6b7280">No web research planned (closed_book mode).</p></div>', unsafe_allow_html=True)
+            st.markdown('<div class="card"><p style="color:#7c8493">No web research planned (closed_book mode).</p></div>', unsafe_allow_html=True)
 
     st.markdown("---")
     feedback = st.text_area(
-        "📝 Optional feedback / instructions for the next steps",
+        "Optional feedback / instructions for the next steps",
         placeholder="e.g. 'Focus more on production use cases' · 'Add a query about LangGraph v0.4' · 'Use a more beginner-friendly tone'",
         height=80,
     )
 
     col_ok, col_back = st.columns([1, 4])
     with col_ok:
-        if st.button("✅ Approve & Continue", type="primary", use_container_width=True):
+        if st.button("Approve & Continue", icon=":material/check_circle:", type="primary", use_container_width=True):
             st.session_state.router_feedback = feedback
             st.session_state.stage = "researching" if rd["needs_research"] else "orchestrating"
             st.rerun()
     with col_back:
-        if st.button("↩️ Back to Topic", use_container_width=True):
+        if st.button("Back to Topic", icon=":material/arrow_back:", use_container_width=True):
             st.session_state.stage = "idle"
             st.rerun()
 
 
 # STAGE: RESEARCHING
 elif st.session_state.stage == "researching":
-    st.info("🔎 Researching the web with Tavily…")
+    st.info("Researching the web with Tavily…", icon=":material/travel_explore:")
 
     log_placeholder = st.empty()
 
@@ -428,7 +539,7 @@ elif st.session_state.stage == "researching":
 
 # STAGE: ORCHESTRATING
 elif st.session_state.stage == "orchestrating":
-    st.info("🎼 Generating blog outline…")
+    st.info("Generating blog outline…", icon=":material/route:")
 
     with st.spinner("Orchestrating plan…"):
         fake_state = {
@@ -461,7 +572,7 @@ elif st.session_state.stage == "hitl_plan":
 
     st.markdown(f"""
     <div class="hitl-box">
-      <div class="hitl-title">🛑 Checkpoint 2 of 2 — Review Blog Outline</div>
+      <div class="hitl-title">:material/flag: Checkpoint 2 of 2 — Review Blog Outline</div>
       <div class="hitl-sub">The orchestrator has generated a plan. Review each section before writing begins.</div>
     </div>
     """, unsafe_allow_html=True)
@@ -481,7 +592,7 @@ elif st.session_state.stage == "hitl_plan":
 
     # Evidence summary
     if st.session_state.evidence:
-        with st.expander(f"📚 Research Evidence ({len(st.session_state.evidence)} items)", expanded=False):
+        with st.expander(f"Research Evidence ({len(st.session_state.evidence)} items)", icon=":material/menu_book:", expanded=False):
             for e in st.session_state.evidence[:12]:
                 st.markdown(f"- [{e.title or e.url}]({e.url}) — *{e.published_at or 'date unknown'}*")
 
@@ -489,14 +600,14 @@ elif st.session_state.stage == "hitl_plan":
     st.markdown("**Planned Sections:**")
     for task in plan.tasks:
         tags_html = "".join(
-            f'<span style="background:#1f2937;color:#9ca3af;font-size:0.7rem;padding:2px 7px;border-radius:99px;margin-right:4px">{t}</span>'
+            f'<span class="task-tag">{t}</span>'
             for t in task.tags
         )
         flags = []
-        if task.requires_code:      flags.append("💻 code")
-        if task.requires_citations: flags.append("📎 citations")
-        if task.requires_research:  flags.append("🔎 research")
-        flags_html = " &nbsp;".join(f'<span style="color:#a78bfa;font-size:0.75rem">{f}</span>' for f in flags)
+        if task.requires_code:      flags.append(':material/code: code')
+        if task.requires_citations: flags.append(':material/attach_file: citations')
+        if task.requires_research:  flags.append(':material/travel_explore: research')
+        flags_html = "".join(f'<span class="task-flag">{f}</span>' for f in flags)
 
         bullets_html = "".join(f"<li>{b}</li>" for b in task.bullets)
         st.markdown(f"""
@@ -509,23 +620,23 @@ elif st.session_state.stage == "hitl_plan":
 
     st.markdown("---")
     feedback = st.text_area(
-        "📝 Optional feedback before writing",
+        "Optional feedback before writing",
         placeholder="e.g. 'Add a section on testing' · 'Make section 3 more code-heavy' · 'Swap sections 2 and 4'",
         height=80,
     )
 
     col_ok, col_regen, col_back = st.columns([1, 1, 3])
     with col_ok:
-        if st.button("✅ Approve & Write", type="primary", use_container_width=True):
+        if st.button("Approve & Write", icon=":material/check_circle:", type="primary", use_container_width=True):
             st.session_state.plan_feedback = feedback
             st.session_state.stage = "writing"
             st.rerun()
     with col_regen:
-        if st.button("🔄 Regenerate Plan", use_container_width=True):
+        if st.button("Regenerate Plan", icon=":material/refresh:", use_container_width=True):
             st.session_state.stage = "orchestrating"
             st.rerun()
     with col_back:
-        if st.button("↩️ Back to Router Review", use_container_width=True):
+        if st.button("Back to Router Review", icon=":material/arrow_back:", use_container_width=True):
             st.session_state.stage = "hitl_router"
             st.rerun()
 
@@ -535,7 +646,7 @@ elif st.session_state.stage == "writing":
     plan: Plan = st.session_state.plan
     n = len(plan.tasks)
 
-    st.markdown(f"### ✍️ Writing **{plan.blog_title}**")
+    st.markdown(f"### :material/edit: Writing **{plan.blog_title}**")
 
     progress_bar = st.progress(0, text="Starting…")
     log_box      = st.empty()
@@ -546,7 +657,7 @@ elif st.session_state.stage == "writing":
         pct = int((i / n) * 100)
         progress_bar.progress(pct, text=f"Writing section {i+1}/{n}: {task.title}")
 
-        log(f"✍️ Section {task.id}/{n}: **{task.title}**")
+        log(f":material/edit_note: Section {task.id}/{n}: **{task.title}**")
         log_box.markdown(
             '<div class="step-log">' + "<br>".join(st.session_state.log_lines[-12:]) + '</div>',
             unsafe_allow_html=True
@@ -569,19 +680,21 @@ elif st.session_state.stage == "writing":
 
             # Live preview of written section
             _, section_md = result["sections"][0]
-            with section_feed.expander(f"✅ {task.title}", expanded=False):
+            with section_feed.expander(f"{task.title}", icon=":material/check_circle:", expanded=False):
                 st.markdown(section_md)
 
         except Exception as e:
             st.error(f"Worker error on section {task.id}: {e}")
 
     progress_bar.progress(100, text="Assembling final blog…")
-    log("📦 Assembling all sections…")
+    log(":material/inventory_2: Assembling all sections…")
 
     # Reducer
     fake_state = {
-        "plan":     plan,
-        "sections": sections,
+        "plan":       plan,
+        "sections":   sections,
+        "provider":   st.session_state.provider,
+        "model_name": st.session_state.model_name,
     }
     from nodes import reducer_node as _reduce
     result = _reduce(fake_state, log=log)
@@ -589,7 +702,7 @@ elif st.session_state.stage == "writing":
     st.session_state.sections   = sections
     st.session_state.stage      = "done"
 
-    log("🎉 Blog complete!")
+    log(":material/celebration: Blog complete!")
     log_box.markdown(
         '<div class="step-log">' + "<br>".join(st.session_state.log_lines[-12:]) + '</div>',
         unsafe_allow_html=True
@@ -607,15 +720,15 @@ elif st.session_state.stage == "done":
 
     # stats banner
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("📝 Words",    f"{word_count:,}")
-    col2.metric("📑 Sections", section_count)
-    col3.metric("🌐 Mode",     st.session_state.mode.replace("_", " ").title())
-    col4.metric("📚 Evidence", len(st.session_state.evidence))
+    col1.metric(":material/edit_note: Words",    f"{word_count:,}")
+    col2.metric(":material/bookmarks: Sections", section_count)
+    col3.metric(":material/public: Mode",     st.session_state.mode.replace("_", " ").title())
+    col4.metric(":material/menu_book: Evidence", len(st.session_state.evidence))
 
-    st.success(f"✅ **{plan.blog_title}** — generation complete!")
+    st.success(f"**{plan.blog_title}** — generation complete!", icon=":material/check_circle:")
 
     # tab layout
-    tab_preview, tab_raw, tab_log = st.tabs(["📖 Preview", "📄 Raw Markdown", "📋 Generation Log"])
+    tab_preview, tab_raw, tab_log = st.tabs([":material/book_4: Preview", ":material/description: Raw Markdown", ":material/terminal: Generation Log"])
 
     with tab_preview:
         st.markdown(f'<div class="blog-preview">{_md_to_html(final)}</div>', unsafe_allow_html=True)
@@ -636,7 +749,8 @@ elif st.session_state.stage == "done":
     with col_dl:
         filename = plan.blog_title.replace(" ", "_").replace("/", "-")[:60] + ".md"
         st.download_button(
-            "⬇️ Download .md",
+            "Download .md",
+            icon=":material/download:",
             data=final.encode(),
             file_name=filename,
             mime="text/markdown",
@@ -645,46 +759,15 @@ elif st.session_state.stage == "done":
         )
 
     with col_cp:
-        if st.button("📋 Copy to Clipboard", use_container_width=True):
+        if st.button("Copy to Clipboard", icon=":material/content_copy:", use_container_width=True):
             st.write("""<script>
             navigator.clipboard.writeText(document.querySelector('code').innerText);
             </script>""", unsafe_allow_html=True)
             st.toast("Copied!")
 
     with col_new:
-        if st.button("✨ Write Another Blog", use_container_width=True):
+        if st.button("Write Another Blog", icon=":material/auto_awesome:", use_container_width=True):
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
             _init()
             st.rerun()
-
-
-# helper: very simple markdown → HTML (just for headings/bold in preview)
-def _md_to_html(md: str) -> str:
-    """Minimal markdown → HTML for the preview card (Streamlit handles most of it)."""
-    import re
-    lines = []
-    in_code = False
-    for line in md.split("\n"):
-        if line.startswith("```"):
-            in_code = not in_code
-            lines.append("<pre><code>" if in_code else "</code></pre>")
-            continue
-        if in_code:
-            lines.append(line.replace("<", "&lt;").replace(">", "&gt;"))
-            continue
-        line = re.sub(r"^# (.+)$",  r"<h1>\1</h1>", line)
-        line = re.sub(r"^## (.+)$", r"<h2>\1</h2>", line)
-        line = re.sub(r"^### (.+)$",r"<h3>\1</h3>", line)
-        line = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", line)
-        line = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", line)
-        line = re.sub(r"`(.+?)`",       r"<code>\1</code>", line)
-        line = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', line)
-        if line.startswith("- ") or line.startswith("* "):
-            line = "<li>" + line[2:] + "</li>"
-        elif line.strip() == "":
-            line = "<br>"
-        else:
-            line = "<p>" + line + "</p>"
-        lines.append(line)
-    return "\n".join(lines)

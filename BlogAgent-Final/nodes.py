@@ -19,7 +19,7 @@ from custom_objects import (
 )
 from prompts import (
     ROUTER_SYSTEM, RESEARCH_SYSTEM,
-    ORCH_SYSTEM, WORKER_SYSTEM,
+    ORCH_SYSTEM, WORKER_SYSTEM, EDITOR_SYSTEM,
 )
 from llm_factory import get_llm, get_structured_llm
 
@@ -232,10 +232,39 @@ def reducer_node(state: State, log: Optional[Callable] = None) -> dict:
 
     ordered = [md for _, md in sorted(state["sections"], key=lambda x: x[0])]
     body    = "\n\n".join(ordered).strip()
-    final   = f"# {plan.blog_title}\n\n{body}\n"
+    draft   = f"# {plan.blog_title}\n\n{body}\n"
 
     if log:
-        log(f"📝 Blog assembled: **{len(final.split())}** words across {len(ordered)} sections.")
+        log(f"📝 Draft assembled: **{len(draft.split())}** words across {len(ordered)} sections. Polishing…")
+
+    provider = state.get("provider", "groq")
+    model    = state.get("model_name", "llama-3.3-70b-versatile")
+
+    try:
+        llm = get_llm(provider, model, temperature=0.3)
+        polished = llm.invoke([
+            SystemMessage(content=EDITOR_SYSTEM),
+            HumanMessage(content=draft),
+        ]).content.strip()
+
+        # sanity check: editor sometimes wraps output in a code fence or drops
+        # too much content — fall back to the raw draft if that happens.
+        if polished.startswith("```"):
+            polished = polished.strip("`").lstrip("markdown").strip()
+
+        if len(polished.split()) < 0.6 * len(draft.split()):
+            if log:
+                log("⚠️  Editor pass dropped too much content — keeping unedited draft.")
+            final = draft
+        else:
+            final = polished if polished.endswith("\n") else polished + "\n"
+    except Exception as e:
+        if log:
+            log(f"⚠️  Editor pass failed ({e}) — keeping unedited draft.")
+        final = draft
+
+    if log:
+        log(f"✅ Final blog: **{len(final.split())}** words.")
 
     return {"final": final}
 
